@@ -14,6 +14,7 @@
 #include <type_traits>
 
 #include "DataStructures/DataVector.hpp"
+#include "Utilities/Gsl.hpp"
 
 namespace hydro::primitive_sources {
 template <class T>
@@ -23,9 +24,9 @@ using M = std::array<V<T>, 3>;
 template <class T>
 using Sources =
     std::array<T, 5>;  // E, contravariant spatial Sx,Sy,Sz, spatial trace
-inline size_t size(const double&) { return 1; }
+inline size_t size(const double& /*x*/) { return 1; }
 inline size_t size(const DataVector& x) { return x.size(); }
-inline double cell(double x, size_t) { return x; }
+inline double cell(double x, size_t /*i*/) { return x; }
 inline double cell(const DataVector& x, size_t i) { return x[i]; }
 template <class T>
 T constant(const T& x, double a) {
@@ -53,8 +54,11 @@ T sub_product(const T& x, const T& a, const T& b) {
 }
 template <class T>
 T diff(const T& a, const T& b, const T& c, const T& d) {
-  const T cd = c * d, minus_cd = -cd, minus_c = -c;
-  const T hi = fma_value(a, b, minus_cd), lo = fma_value(minus_c, d, cd);
+  const T cd = c * d;
+  const T minus_cd = -cd;
+  const T minus_c = -c;
+  const T hi = fma_value(a, b, minus_cd);
+  const T lo = fma_value(minus_c, d, cd);
   return T(hi + lo);
 }
 template <class T>
@@ -105,8 +109,13 @@ inline bool exact_enthalpy_nonnegative(double rho, double epsilon, double p) {
   if (epsilon >= -1 or rho == 0) {
     return true;
   }
-  const auto r = dyadic(rho), e = dyadic(epsilon), pressure = dyadic(p);
-  return r + r * e + pressure >= 0;
+  const auto r = dyadic(rho);
+  const auto e = dyadic(epsilon);
+  const auto pressure = dyadic(p);
+  const boost::multiprecision::cpp_rational enthalpy = r + r * e + pressure;
+  // A normalized rational has a positive denominator, so only its numerator
+  // determines the sign. Do not cross-multiply rational denominators with zero.
+  return numerator(enthalpy) >= 0;
 }
 /*!
  * \brief Compute energy density, contravariant momentum density and spatial
@@ -155,10 +164,10 @@ Sources<T> joint_sources(const T& rho, const T& epsilon, const T& p,
   check(epsilon);
   check(p);
   for (size_t i = 0; i < 3; ++i) {
-    check(v[i]);
-    check(B[i]);
+    check(gsl::at(v, i));
+    check(gsl::at(B, i));
     for (size_t j = 0; j < 3; ++j) {
-      check(g[i][j]);
+      check(gsl::at(gsl::at(g, i), j));
     }
   }
   for (size_t k = 0; k < n; ++k) {
@@ -172,13 +181,15 @@ Sources<T> joint_sources(const T& rho, const T& epsilon, const T& p,
     }
     for (size_t i = 0; i < 3; ++i) {
       for (size_t j = 0; j < 3; ++j) {
-        if (cell(g[i][j], k) != cell(g[j][i], k)) {
+        if (cell(gsl::at(gsl::at(g, i), j), k) !=
+            cell(gsl::at(gsl::at(g, j), i), k)) {
           throw std::domain_error("nonsymmetric metric");
         }
       }
     }
   }
-  const T zero = constant(rho, 0), one = constant(rho, 1);
+  const T zero = constant(rho, 0);
+  const T one = constant(rho, 1);
   M<T> U;
   for (auto& row : U) {
     for (auto& x : row) {
@@ -186,38 +197,42 @@ Sources<T> joint_sources(const T& rho, const T& epsilon, const T& p,
     }
   }
   for (size_t i = 0; i < 3; ++i) {
-    T pivot = g[i][i];
+    T pivot = gsl::at(gsl::at(g, i), i);
     for (size_t k = 0; k < i; ++k) {
-      pivot = sub_product(pivot, U[k][i], U[k][i]);
+      pivot = sub_product(pivot, gsl::at(gsl::at(U, k), i),
+                          gsl::at(gsl::at(U, k), i));
     }
     positive(pivot, "Cholesky pivot");
     using std::sqrt;
-    U[i][i] = sqrt(pivot);
-    positive(U[i][i], "Cholesky diagonal");
+    gsl::at(gsl::at(U, i), i) = sqrt(pivot);
+    positive(gsl::at(gsl::at(U, i), i), "Cholesky diagonal");
     for (size_t j = i + 1; j < 3; ++j) {
-      T x = g[i][j];
+      T x = gsl::at(gsl::at(g, i), j);
       for (size_t k = 0; k < i; ++k) {
-        x = sub_product(x, U[k][i], U[k][j]);
+        x = sub_product(x, gsl::at(gsl::at(U, k), i),
+                        gsl::at(gsl::at(U, k), j));
       }
-      U[i][j] = x / U[i][i];
-      finite(U[i][j], "Cholesky offdiagonal");
+      gsl::at(gsl::at(U, i), j) = x / gsl::at(gsl::at(U, i), i);
+      finite(gsl::at(gsl::at(U, i), j), "Cholesky offdiagonal");
     }
   }
   const auto q = cross(v, B);
-  V<T> bv{zero, zero, zero}, vv{zero, zero, zero}, y{zero, zero, zero},
-      Bl{zero, zero, zero};
+  V<T> bv{zero, zero, zero};
+  V<T> vv{zero, zero, zero};
+  V<T> y{zero, zero, zero};
+  V<T> Bl{zero, zero, zero};
   for (size_t i = 0; i < 3; ++i) {
     for (size_t j = i; j < 3; ++j) {
-      bv[i] += U[i][j] * B[j];
-      vv[i] += U[i][j] * v[j];
+      gsl::at(bv, i) += gsl::at(gsl::at(U, i), j) * gsl::at(B, j);
+      gsl::at(vv, i) += gsl::at(gsl::at(U, i), j) * gsl::at(v, j);
     }
-    T rhs = q[i];
+    T rhs = gsl::at(q, i);
     for (size_t k = 0; k < i; ++k) {
-      rhs = sub_product(rhs, U[k][i], y[k]);
+      rhs = sub_product(rhs, gsl::at(gsl::at(U, k), i), gsl::at(y, k));
     }
-    y[i] = rhs / U[i][i];
+    gsl::at(y, i) = rhs / gsl::at(gsl::at(U, i), i);
     for (size_t j = 0; j < 3; ++j) {
-      Bl[i] += g[i][j] * B[j];
+      gsl::at(Bl, i) += gsl::at(gsl::at(g, i), j) * gsl::at(B, j);
     }
   }
   const T volume = U[0][0] * U[1][1] * U[2][2];
@@ -225,7 +240,9 @@ Sources<T> joint_sources(const T& rho, const T& epsilon, const T& p,
   for (auto& x : y) {
     x *= volume;
   }
-  const T B2 = dot(bv, bv), E2 = dot(y, y), v2 = dot(vv, vv);
+  const T B2 = dot(bv, bv);
+  const T E2 = dot(y, y);
+  const T v2 = dot(vv, vv);
   finite(B2, "B2");
   finite(E2, "E2");
   finite(v2, "v2");
@@ -234,8 +251,9 @@ Sources<T> joint_sources(const T& rho, const T& epsilon, const T& p,
       throw std::domain_error("velocity outside timelike domain");
     }
   }
-  const T H = rho + rho * epsilon + p, w2 = one / (one - v2),
-          Eem = (B2 + E2) * .5;
+  const T H = rho + rho * epsilon + p;
+  const T w2 = one / (one - v2);
+  const T Eem = (B2 + E2) * .5;
   finite(H, "enthalpy density");
   for (size_t k = 0; k < n; ++k) {
     if (cell(H, k) < 0) {

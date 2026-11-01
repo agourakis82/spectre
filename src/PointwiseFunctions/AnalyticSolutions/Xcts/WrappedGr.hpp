@@ -101,12 +101,13 @@ struct WrappedGrVariables
       hydro_solution;
   // Only the legacy comoving-field cache needs the provider's W. The joint
   // primitive source path does not evaluate this callback.
-  const std::function<Scalar<DataType>()> provider_lorentz_factor;
+  std::function<Scalar<DataType>()> provider_lorentz_factor;
 
  private:
   // Source order: energy, contravariant S^x/S^y/S^z, spatial stress trace.
   using PrimitiveSources = std::array<DataType, 5>;
-  const PrimitiveSources& primitive_sources() const;
+  const PrimitiveSources& primitive_sources() const
+    requires(HasMhd);
   // This computer is local to one synchronous variables_impl call; it is not
   // shared between calls or stored on the analytic solution.
   // NOLINTNEXTLINE(spectre-mutable)

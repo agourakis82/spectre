@@ -25,6 +25,7 @@
 #include "PointwiseFunctions/Hydro/EquationsOfState/PolytropicFluid.hpp"
 #include "PointwiseFunctions/Hydro/PrimitiveSources.hpp"
 #include "Utilities/ContainerHelpers.hpp"
+#include "Utilities/Gsl.hpp"
 #include "Utilities/MakeWithValue.hpp"
 
 namespace {
@@ -56,7 +57,11 @@ auto provider_variables(const Provider& provider, const tnsr::I<T, 3>& x,
 template <typename Provider, typename T>
 void check_sources(const Xcts::Solutions::WrappedGr<Provider, true>& wrapper,
                    const tnsr::I<T, 3>& x) {
-  using namespace hydro::Tags;
+  using hydro::Tags::MagneticField;
+  using hydro::Tags::Pressure;
+  using hydro::Tags::RestMassDensity;
+  using hydro::Tags::SpatialVelocity;
+  using hydro::Tags::SpecificInternalEnergy;
   const auto all = wrapper.variables(
       x,
       tmpl::list<Energy<T>, Momentum<T>, Trace<T>, Enthalpy<T>, Lorentz<T>>{});
@@ -73,13 +78,15 @@ void check_sources(const Xcts::Solutions::WrappedGr<Provider, true>& wrapper,
                  Lorentz<T>, gr::Tags::SpatialMetric<T, 3>>{});
   CHECK(get<Enthalpy<T>>(all) == get<Enthalpy<T>>(native));
   CHECK(get<Lorentz<T>>(all) == get<Lorentz<T>>(native));
-  std::array<T, 3> velocity{}, magnetic_field{};
+  std::array<T, 3> velocity{};
+  std::array<T, 3> magnetic_field{};
   std::array<std::array<T, 3>, 3> metric{};
   for (size_t i = 0; i < 3; ++i) {
-    velocity[i] = get<SpatialVelocity<T, 3>>(native).get(i);
-    magnetic_field[i] = get<MagneticField<T, 3>>(native).get(i);
+    gsl::at(velocity, i) = get<SpatialVelocity<T, 3>>(native).get(i);
+    gsl::at(magnetic_field, i) = get<MagneticField<T, 3>>(native).get(i);
     for (size_t j = 0; j < 3; ++j) {
-      metric[i][j] = get<gr::Tags::SpatialMetric<T, 3>>(native).get(i, j);
+      gsl::at(gsl::at(metric, i), j) =
+          get<gr::Tags::SpatialMetric<T, 3>>(native).get(i, j);
     }
   }
   // Adapter consistency, not an independent physical reference for the kernel.
@@ -90,7 +97,7 @@ void check_sources(const Xcts::Solutions::WrappedGr<Provider, true>& wrapper,
   CHECK_ITERABLE_APPROX(get(get<Energy<T>>(all)), direct[0]);
   CHECK_ITERABLE_APPROX(get(get<Trace<T>>(all)), direct[4]);
   for (size_t i = 0; i < 3; ++i) {
-    CHECK_ITERABLE_APPROX(get<Momentum<T>>(all).get(i), direct[i + 1]);
+    CHECK_ITERABLE_APPROX(get<Momentum<T>>(all).get(i), gsl::at(direct, i + 1));
   }
 }
 
@@ -102,8 +109,8 @@ void check_scalar_and_vector(
   for (size_t k = 0; k < 3; ++k) {
     tnsr::I<double, 3> scalar{};
     for (size_t i = 0; i < 3; ++i) {
-      scalar.get(i) = points[k][i];
-      batch.get(i)[k] = points[k][i];
+      scalar.get(i) = gsl::at(gsl::at(points, k), i);
+      batch.get(i)[k] = gsl::at(gsl::at(points, k), i);
     }
     check_sources(wrapper, scalar);
   }
@@ -127,7 +134,7 @@ class SentinelStar : public RelativisticEuler::Solutions::RotatingStar {
       : Base(std::move(filename), 100.), calls_(std::move(calls)) {}
   template <typename T, typename... Tags>
   tuples::TaggedTuple<Tags...> variables(const tnsr::I<T, 3>& x, double time,
-                                         tmpl::list<Tags...>) const {
+                                         tmpl::list<Tags...> /*meta*/) const {
     return {value<T, Tags>(x, time)...};
   }
 

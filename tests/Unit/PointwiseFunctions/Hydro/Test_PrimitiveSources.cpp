@@ -10,6 +10,7 @@
 
 #include "DataStructures/DataVector.hpp"
 #include "PointwiseFunctions/Hydro/PrimitiveSources.hpp"
+#include "Utilities/Gsl.hpp"
 
 namespace {
 namespace sources = hydro::primitive_sources;
@@ -34,7 +35,7 @@ void test_thermodynamics() {
       CHECK_ITERABLE_CUSTOM_APPROX(result[0], rho * (1. + epsilon), relative);
       CHECK_ITERABLE_CUSTOM_APPROX(result[4], 3. * pressure, relative);
       for (size_t i = 1; i < 4; ++i) {
-        CHECK(result[i] == 0.);
+        CHECK(gsl::at(result, i) == 0.);
       }
     }
   }
@@ -51,7 +52,8 @@ void test_thermodynamics() {
 
 void test_vacuum() {
   // rho=p=0 retains ideal-MHD electric-field kinematics for the supplied v.
-  const Vector velocity{{0.25, 0., 0.}}, magnetic_field{{0., 2., 0.}};
+  const Vector velocity{{0.25, 0., 0.}};
+  const Vector magnetic_field{{0., 2., 0.}};
   const std::array<double, 5> expected{{2.125, 1., 0., 0., 2.125}};
   for (const double epsilon : {-std::numeric_limits<double>::max(), -2., 0.,
                                std::numeric_limits<double>::max()}) {
@@ -68,8 +70,10 @@ void test_metric_and_batch() {
   // Constant coordinate transform x'=U x, U=[[1,1,0],[0,1,0],[0,0,1]].
   // g=U^T U; E and trace are invariant and S'=U S.
   const Metric metric{{{1., 1., 0.}, {1., 2., 0.}, {0., 0., 1.}}};
-  const Vector velocity{{0.125, 0.25, 0.}}, magnetic_field{{2., -1., 0.5}};
-  const Vector flat_velocity{{0.375, 0.25, 0.}}, flat_field{{1., -1., 0.5}};
+  const Vector velocity{{0.125, 0.25, 0.}};
+  const Vector magnetic_field{{2., -1., 0.5}};
+  const Vector flat_velocity{{0.375, 0.25, 0.}};
+  const Vector flat_field{{1., -1., 0.5}};
   const auto curved =
       sources::joint_sources(1., 0.25, 0.125, velocity, magnetic_field, metric);
   const auto flat = sources::joint_sources(1., 0.25, 0.125, flat_velocity,
@@ -80,15 +84,17 @@ void test_metric_and_batch() {
   CHECK_ITERABLE_APPROX(curved[2], flat[2]);
   CHECK_ITERABLE_APPROX(curved[3], flat[3]);
 
-  const DataVector rho{1., 0., 0.5e-300}, epsilon{0.25, -2., -0.5};
+  const DataVector rho{1., 0., 0.5e-300};
+  const DataVector epsilon{0.25, -2., -0.5};
   const DataVector pressure{0.125, 0., 0.125e-300};
-  std::array<DataVector, 3> v{}, b{};
+  std::array<DataVector, 3> v{};
+  std::array<DataVector, 3> b{};
   std::array<std::array<DataVector, 3>, 3> g{};
   for (size_t i = 0; i < 3; ++i) {
-    v[i] = DataVector(3, velocity[i]);
-    b[i] = DataVector(3, magnetic_field[i]);
+    gsl::at(v, i) = DataVector(3, gsl::at(velocity, i));
+    gsl::at(b, i) = DataVector(3, gsl::at(magnetic_field, i));
     for (size_t j = 0; j < 3; ++j) {
-      g[i][j] = DataVector(3, metric[i][j]);
+      gsl::at(gsl::at(g, i), j) = DataVector(3, gsl::at(gsl::at(metric, i), j));
     }
   }
   const auto batch = sources::joint_sources(rho, epsilon, pressure, v, b, g);
@@ -96,7 +102,7 @@ void test_metric_and_batch() {
     const auto scalar = sources::joint_sources(
         rho[k], epsilon[k], pressure[k], velocity, magnetic_field, metric);
     for (size_t j = 0; j < 5; ++j) {
-      CHECK(batch[j][k] == scalar[j]);
+      CHECK(gsl::at(gsl::at(batch, j), k) == gsl::at(scalar, j));
     }
   }
   // The exact-H counterexample must also reject a single invalid vector lane.
@@ -154,6 +160,31 @@ void test_rejections() {
                       std::array<std::array<DataVector, 3>, 3>{}),
                   std::invalid_argument);
 }
+
+void test_exact_enthalpy_sign() {
+  // H = rho * (1 - 2) + p changes sign exactly at p = rho. Exercise
+  // subnormal densities and shifts on both sides of a multiprecision limb.
+  // Adjacent received pressures must stay on their respective sides of zero.
+  for (const int exponent :
+       {-1070, -1022, -1011, -64, 0, 53, 64, 117, 512, 1020}) {
+    CAPTURE(exponent);
+    const double rho = std::ldexp(1., exponent);
+    CHECK(sources::exact_enthalpy_nonnegative(rho, -2., rho));
+    CHECK_FALSE(
+        sources::exact_enthalpy_nonnegative(rho, -2., std::nextafter(rho, 0.)));
+    CHECK(sources::exact_enthalpy_nonnegative(
+        rho, -2.,
+        std::nextafter(rho, std::numeric_limits<double>::infinity())));
+    // A fractional negative internal energy also has an exact dyadic boundary.
+    const double pressure = 0.25 * rho;
+    CHECK(sources::exact_enthalpy_nonnegative(rho, -1.25, pressure));
+    CHECK_FALSE(sources::exact_enthalpy_nonnegative(
+        rho, -1.25, std::nextafter(pressure, 0.)));
+    CHECK(sources::exact_enthalpy_nonnegative(
+        rho, -1.25,
+        std::nextafter(pressure, std::numeric_limits<double>::infinity())));
+  }
+}
 }  // namespace
 
 SPECTRE_TEST_CASE("Unit.PointwiseFunctions.Hydro.PrimitiveSources",
@@ -162,4 +193,5 @@ SPECTRE_TEST_CASE("Unit.PointwiseFunctions.Hydro.PrimitiveSources",
   test_vacuum();
   test_metric_and_batch();
   test_rejections();
+  test_exact_enthalpy_sign();
 }

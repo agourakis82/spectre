@@ -343,42 +343,40 @@ void WrappedGrVariables<DataType, HasMhd>::operator()(
 
 template <typename DataType, bool HasMhd>
 const typename WrappedGrVariables<DataType, HasMhd>::PrimitiveSources&
-WrappedGrVariables<DataType, HasMhd>::primitive_sources() const {
-  if constexpr (HasMhd) {
-    if (not primitive_sources_.has_value()) {
-      const auto& rho =
-          get<hydro::Tags::RestMassDensity<DataType>>(hydro_solution);
-      const auto& epsilon =
-          get<hydro::Tags::SpecificInternalEnergy<DataType>>(hydro_solution);
-      const auto& pressure =
-          get<hydro::Tags::Pressure<DataType>>(hydro_solution);
-      const auto& velocity =
-          get<hydro::Tags::SpatialVelocity<DataType, Dim>>(hydro_solution);
-      const auto& magnetic_field =
-          get<hydro::Tags::MagneticField<DataType, Dim>>(hydro_solution);
-      const auto& metric =
-          get<gr::Tags::SpatialMetric<DataType, Dim>>(gr_solution);
-      std::array<DataType, 3> v{}, b{};
-      std::array<std::array<DataType, 3>, 3> g{};
-      for (size_t i = 0; i < Dim; ++i) {
-        v[i] = velocity.get(i);
-        b[i] = magnetic_field.get(i);
-        for (size_t j = 0; j < Dim; ++j) {
-          g[i][j] = metric.get(i, j);
-        }
+WrappedGrVariables<DataType, HasMhd>::primitive_sources() const
+  requires(HasMhd)
+{
+  if (not primitive_sources_.has_value()) {
+    const auto& rho =
+        get<hydro::Tags::RestMassDensity<DataType>>(hydro_solution);
+    const auto& epsilon =
+        get<hydro::Tags::SpecificInternalEnergy<DataType>>(hydro_solution);
+    const auto& pressure = get<hydro::Tags::Pressure<DataType>>(hydro_solution);
+    const auto& velocity =
+        get<hydro::Tags::SpatialVelocity<DataType, Dim>>(hydro_solution);
+    const auto& magnetic_field =
+        get<hydro::Tags::MagneticField<DataType, Dim>>(hydro_solution);
+    const auto& metric =
+        get<gr::Tags::SpatialMetric<DataType, Dim>>(gr_solution);
+    std::array<DataType, 3> v{};
+    std::array<DataType, 3> b{};
+    std::array<std::array<DataType, 3>, 3> g{};
+    for (size_t i = 0; i < Dim; ++i) {
+      gsl::at(v, i) = velocity.get(i);
+      gsl::at(b, i) = magnetic_field.get(i);
+      for (size_t j = 0; j < Dim; ++j) {
+        gsl::at(gsl::at(g, i), j) = metric.get(i, j);
       }
-      // Direct primitive H is intentional, including below CcsnCollapse's
-      // historical h-denominator floor. The library validates the primitives;
-      // the wrapper neither repairs them nor reconstructs epsilon from h.
-      // Store only a complete successful result; errors propagate to the
-      // caller.
-      primitive_sources_.emplace(hydro::primitive_sources::joint_sources(
-          get(rho), get(epsilon), get(pressure), v, b, g));
     }
-    return *primitive_sources_;
-  } else {
-    ERROR("Primitive matter sources must not be requested in pure GR.");
+    // Direct primitive H is intentional, including below CcsnCollapse's
+    // historical h-denominator floor. The library validates the primitives;
+    // the wrapper neither repairs them nor reconstructs epsilon from h.
+    // Store only a complete successful result; errors propagate to the
+    // caller.
+    primitive_sources_.emplace(hydro::primitive_sources::joint_sources(
+        get(rho), get(epsilon), get(pressure), v, b, g));
   }
+  return *primitive_sources_;
 }
 
 template <typename DataType, bool HasMhd>
@@ -414,7 +412,7 @@ void WrappedGrVariables<DataType, HasMhd>::operator()(
   if constexpr (HasMhd) {
     const auto& sources = primitive_sources();
     for (size_t i = 0; i < Dim; ++i) {
-      momentum_density->get(i) = sources[i + 1];
+      momentum_density->get(i) = gsl::at(sources, i + 1);
     }
   } else {
     std::fill(momentum_density->begin(), momentum_density->end(), 0.);
