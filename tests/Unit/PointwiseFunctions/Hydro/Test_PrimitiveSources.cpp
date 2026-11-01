@@ -166,7 +166,8 @@ void test_exact_enthalpy_sign() {
   // subnormal densities and shifts on both sides of a multiprecision limb.
   // Adjacent received pressures must stay on their respective sides of zero.
   for (const int exponent :
-       {-1070, -1022, -1011, -64, 0, 53, 64, 117, 512, 1020}) {
+       {-1070, -1022, -1011, -64, -12, -11, 0,  20,  21,  22,
+        52,    53,    54,    64,  84,  85,  86, 117, 512, 1020}) {
     CAPTURE(exponent);
     const double rho = std::ldexp(1., exponent);
     CHECK(sources::exact_enthalpy_nonnegative(rho, -2., rho));

@@ -97,10 +97,17 @@ inline boost::multiprecision::cpp_rational dyadic(double x) {
   const double fraction = std::frexp(x, &exponent);
   boost::multiprecision::cpp_rational q =
       static_cast<std::int64_t>(std::ldexp(fraction, 53));
+  const int shift = std::abs(exponent - 53);
+  // Build the exact power of two with fixed byte-aligned multiprecision
+  // shifts. The remaining built-in shift is bounded to [0, 31].
+  boost::multiprecision::cpp_int scale = std::uint64_t{1} << (shift % 32);
+  for (int i = 0; i < shift / 32; ++i) {
+    scale <<= 32;
+  }
   if (exponent >= 53) {
-    q *= boost::multiprecision::cpp_int(1) << (exponent - 53);
+    q *= scale;
   } else {
-    q /= boost::multiprecision::cpp_int(1) << (53 - exponent);
+    q /= scale;
   }
   return q;
 }
